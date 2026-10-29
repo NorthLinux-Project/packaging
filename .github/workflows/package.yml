@@ -1,0 +1,69 @@
+name: Build North Linux Packages
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Packages & Repository Index
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Packaging Repository
+        uses: actions/checkout@v4
+        with:
+          path: packaging
+
+      - name: Checkout nlpm Repository
+        uses: actions/checkout@v4
+        with:
+          repository: NorthLinux-Project/nlpm
+          path: nlpm
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            libarchive-dev \
+            libcurl4-openssl-dev \
+            libsqlite3-dev \
+            libzstd-dev
+
+      - name: Build and Install nlpm
+        run: |
+          cd nlpm
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          sudo cp build/src/nlpm /usr/local/bin/nlpm
+          nlpm --version
+
+      - name: Build Core Packages
+        run: |
+          cd packaging
+          mkdir -p out/core
+          for pkg in core/*/NLBUILD; do
+            if [ -f "$pkg" ]; then
+              pkgdir="$(dirname "$pkg")"
+              echo "==> Building $pkgdir..."
+              ./builder/nlbuild "$pkgdir" out/core
+            fi
+          done
+
+      - name: Generate Repository Index (core.nldb)
+        run: |
+          cd packaging
+          ./builder/nlrepo out/core core
+          ls -lh out/core/
+
+      - name: Upload Core Package Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: northlinux-core-x86_64
+          path: packaging/out/core/
+          if-no-files-found: error

@@ -1,0 +1,23 @@
+# Build workdirs and caches
+.nlbuild*/
+src/
+pkg/
+out/
+
+# Downloaded source archives
+*.tar.gz
+*.tar.xz
+*.tar.bz2
+*.tar.zst
+*.tar
+*.zip
+*.part
+
+# Built package artifacts (when testing locally)
+*.nlpkg
+*.nldb
+
+# OS and Editor
+.DS_Store
+*.swp
+*~

@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET="${1:-}"
+
+if [[ -z "$TARGET" ]]; then
+    echo "Usage: $0 <path/to/package_dir_or_NLBUILD> [output_dir]" >&2
+    exit 1
+fi
+
+OUTPUT_DIR="${2:-.}"
+
+if [[ -d "$TARGET" ]]; then
+    RECIPE="${TARGET}/NLBUILD"
+elif [[ -f "$TARGET" ]]; then
+    RECIPE="$TARGET"
+else
+    echo "Error: Target '$TARGET' not found." >&2
+    exit 1
+fi
+
+if [[ ! -f "$RECIPE" ]]; then
+    echo "Error: Recipe file '$RECIPE' not found." >&2
+    exit 1
+fi
+
+NLPM_BIN="${NLPM_BIN:-nlpm}"
+if ! command -v "$NLPM_BIN" &>/dev/null; then
+    if [[ -x "/home/leugard/Projects/C/nlpm/build/debug/src/nlpm" ]]; then
+        NLPM_BIN="/home/leugard/Projects/C/nlpm/build/debug/src/nlpm"
+    elif [[ -x "/usr/local/bin/nlpm" ]]; then
+        NLPM_BIN="/usr/local/bin/nlpm"
+    else
+        echo "Error: nlpm binary not found in PATH." >&2
+        exit 1
+    fi
+fi
+
+pkgname=""
+pkgver=""
+pkgdesc=""
+url=""
+arch="x86_64"
+license=()
+depends=()
+optdepends=()
+conflicts=()
+provides=()
+sources=()
+sha256sums=()
+
+# shellcheck source=/dev/null
+source "$RECIPE"
+
+if [[ -z "$pkgname" || -z "$pkgver" ]]; then
+    echo "Error: pkgname and pkgver must be set in $RECIPE." >&2
+    exit 1
+fi
+
+WORK_DIR="$(pwd)/.nlbuild_${pkgname}_${pkgver}"
+srcdir="${WORK_DIR}/src"
+pkgdir="${WORK_DIR}/pkg"
+
+rm -rf "$WORK_DIR"
+mkdir -p "$srcdir" "$pkgdir"
+
+echo "==> Building ${pkgname} ${pkgver}..."
+
+if [[ ${#sources[@]} -gt 0 ]]; then
+    for idx in "${!sources[@]}"; do
+        src_url="${sources[$idx]}"
+        src_file="$(basename "$src_url")"
+        expected_sha="${sha256sums[$idx]:-}"
+
+        if [[ ! -f "$src_file" ]]; then
+            echo "--> Downloading ${src_url}..."
+            curl -fsSL "$src_url" -o "$src_file"
+        fi
+
+        if [[ -n "$expected_sha" && "$expected_sha" != "SKIP" ]]; then
+            echo "--> Verifying checksum for ${src_file}..."
+            actual_sha="$(sha256sum "$src_file" | awk '{print $1}')"
+            if [[ "$actual_sha" != "$expected_sha" ]]; then
+                echo "Error: Checksum mismatch for ${src_file}." >&2
+                echo "Expected: ${expected_sha}" >&2
+                echo "Actual:   ${actual_sha}" >&2
+                exit 1
+            fi
+        fi
+
+        echo "--> Extracting ${src_file}..."
+        if [[ "$src_file" == *.tar.gz || "$src_file" == *.tgz ]]; then
+            tar -xzf "$src_file" -C "$srcdir"
+        elif [[ "$src_file" == *.tar.xz ]]; then
+            tar -xJf "$src_file" -C "$srcdir"
+        elif [[ "$src_file" == *.tar.bz2 ]]; then
+            tar -xjf "$src_file" -C "$srcdir"
+        elif [[ "$src_file" == *.tar.zst ]]; then
+            tar --zstd -xf "$src_file" -C "$srcdir"
+        fi
+    done
+fi
+
+if declare -f build >/dev/null; then
+    echo "==> Running build()..."
+    ( cd "$WORK_DIR"; build )
+fi
+
+if declare -f package >/dev/null; then
+    echo "==> Running package()..."
+    ( cd "$WORK_DIR"; package )
+fi
+
+MANIFEST="${pkgdir}/nlpkg.toml"
+echo "==> Generating manifest ${MANIFEST}..."
+
+cat << EOF > "$MANIFEST"
+name = "${pkgname}"
+version = "${pkgver}"
+desc = "${pkgdesc}"
+url = "${url}"
+arch = "${arch}"
+
+[deps]
+depend = [
+EOF
+
+for dep in "${depends[@]:-}"; do
+    [[ -n "$dep" ]] && echo "  \"${dep}\"," >> "$MANIFEST"
+done
+
+cat << EOF >> "$MANIFEST"
+]
+conflict = [
+EOF
+
+for conf in "${conflicts[@]:-}"; do
+    [[ -n "$conf" ]] && echo "  \"${conf}\"," >> "$MANIFEST"
+done
+
+cat << EOF >> "$MANIFEST"
+]
+provides = [
+EOF
+
+for prov in "${provides[@]:-}"; do
+    [[ -n "$prov" ]] && echo "  \"${prov}\"," >> "$MANIFEST"
+done
+
+echo "]" >> "$MANIFEST"
+
+echo "==> Assembling .nlpkg package..."
+"$NLPM_BIN" build "$pkgdir"
+
+OUT_NAME="${pkgname}-${pkgver}-${arch}.nlpkg"
+if [[ -f "$OUT_NAME" ]]; then
+    mkdir -p "$OUTPUT_DIR"
+    if [[ "$OUTPUT_DIR" != "." && "$OUTPUT_DIR" != "$(pwd)" ]]; then
+        mv "$OUT_NAME" "${OUTPUT_DIR}/"
+        echo "==> Package saved to ${OUTPUT_DIR}/${OUT_NAME}"
+    else
+        echo "==> Package saved to $(pwd)/${OUT_NAME}"
+    fi
+fi
+
+rm -rf "$WORK_DIR"

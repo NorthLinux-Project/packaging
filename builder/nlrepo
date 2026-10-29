@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_DIR="${1:-.}"
+REPO_NAME="${2:-core}"
+
+if [[ ! -d "$REPO_DIR" ]]; then
+    echo "Error: Directory '$REPO_DIR' does not exist." >&2
+    exit 1
+fi
+
+NLPM_BIN="${NLPM_BIN:-nlpm}"
+if ! command -v "$NLPM_BIN" &>/dev/null; then
+    if [[ -x "/home/leugard/Projects/C/nlpm/build/debug/src/nlpm" ]]; then
+        NLPM_BIN="/home/leugard/Projects/C/nlpm/build/debug/src/nlpm"
+    elif [[ -x "/usr/local/bin/nlpm" ]]; then
+        NLPM_BIN="/usr/local/bin/nlpm"
+    else
+        echo "Error: nlpm binary not found in PATH." >&2
+        exit 1
+    fi
+fi
+
+OUT_NLDB="${REPO_DIR}/${REPO_NAME}.nldb"
+
+echo "==> Indexing repository '${REPO_NAME}' in ${REPO_DIR}..."
+"$NLPM_BIN" index "$REPO_DIR" "$OUT_NLDB"
+echo "==> Repository database updated: ${OUT_NLDB}"
